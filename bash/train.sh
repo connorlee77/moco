@@ -1,18 +1,22 @@
-arch=efficient-vit
+arch=$1
+dist_url=$2
+dataroot=$3
+# dataroot=/media/hdd2/data/thermal_ssl/
+# dist_url=tcp://localhost:10001
+# arch=efficient-vit
 # arch=mobilenetv3_small_075
 # arch=resnet18
-python main_moco.py /media/hdd2/data/thermal_ssl/ \
-    --workers 8 \
-    --epochs 200 \
+python main_moco.py ${dataroot} \
+    --workers 12 \
+    --epochs 300 \
     --batch-size 256 \
     --multiprocessing-distributed \
     --rank 0 \
     --world-size 1 \
-    --dist-url 'tcp://localhost:10001' \
+    --dist-url ${dist_url} \
     --moco-k 4096 \
     --mlp \
     --aug-plus \
     --cos \
     --arch $arch \
-    --exp-name ${arch}-test \
-    --epochs 5
+    --exp-name ${arch}-test
