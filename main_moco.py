@@ -33,7 +33,7 @@ import torchvision.transforms as transforms
 import timm
 import wandb
 from models.fast_scnn_512x640 import FastSCNN512x640
-from models.efficientvit import get_efficientvit_b1_cls_weights
+from models.efficientvit import get_efficientvit_b1_cls_weights, filter_and_load_weights
 from moco.dataset import ThermalSSLDataset
 import numpy as np
 
@@ -194,6 +194,7 @@ def main():
             # Set the project where this run will be logged
             project='thermal_ssl_moco',
             notes=args.exp_name,
+            name=args.exp_name,
             tags=[args.arch],
             # Track hyperparameters and run metadata
             config=vars(args)
@@ -273,6 +274,15 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.arch == "fast-scnn":
         encoder_q = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
         encoder_k = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
+        
+        weight = torch.load('pretrained_weights/fastscnn.ckpt')['state_dict']
+        remapped_weights = {}
+        for k, v in weight.items():
+            remapped_weights[k.replace('model.', '')] = v
+        msg = filter_and_load_weights(encoder_q, remapped_weights)
+        msg = filter_and_load_weights(encoder_k, remapped_weights)
+        print(msg)        
+
     elif args.arch == "efficient-vit":
         encoder_q = get_efficientvit_b1_cls_weights(
             in_channels=args.in_channels, n_classes=args.moco_dim, weight_path="pretrained_weights/b1-r224.pt", load_weight=True)
@@ -488,6 +498,8 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
                     'train/acc@5': acc5[0].item(),
                     "train/loss": loss.item(),
                     "train/vis": wandb.Image(vis, caption='Input images'),
+                    "misc/lr" : optimizer.param_groups[0]['lr'],
+                    "misc/epoch": epoch,
                 })
 
 

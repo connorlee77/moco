@@ -19,16 +19,14 @@ class FastSCNN512x640(nn.Module):
         self.learning_to_downsample = LearningToDownsample(32, 48, 64, in_channels)
         self.global_feature_extractor = GlobalFeatureExtractor(64, [64, 96, 128], 128, 6, [3, 3, 3])
         self.gap = nn.AdaptiveAvgPool2d(1)
-
-        self.fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(128, num_classes),
-        )
-
+        self.flatten = nn.Flatten()
+        self.fc = nn.Linear(128, num_classes)
+        
     def forward(self, x):
         higher_res_features = self.learning_to_downsample(x)
         x = self.global_feature_extractor(higher_res_features)
         x = self.gap(x)
+        x = self.flatten(x)
         x = self.fc(x)
         return x
 
