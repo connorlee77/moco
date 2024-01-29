@@ -1,4 +1,5 @@
-arch=mobilenetv3_small_075
+arch=efficient-vit
+# arch=mobilenetv3_small_075
 # arch=resnet18
 python main_moco.py /media/hdd2/data/thermal_ssl/ \
     --workers 8 \

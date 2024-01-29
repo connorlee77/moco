@@ -1,5 +1,20 @@
 ## MoCo: Momentum Contrast for Unsupervised Visual Representation Learning
 
+Connor's install guide:
+```
+git clone --recurse-submodules -j8 git@github.com:connorlee77/moco.git
+
+
+conda create -n moco python=3.10 -y
+conda activate moco
+
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip3 install -r requirements.txt
+
+cd third_party/efficientvit
+pip install .
+```
+
 <p align="center">
   <img src="https://user-images.githubusercontent.com/11435359/71603927-0ca98d00-2b14-11ea-9fd8-10d984a2de45.png" width="300">
 </p>

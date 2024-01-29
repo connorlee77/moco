@@ -33,6 +33,9 @@ import torchvision.transforms as transforms
 import timm
 import wandb
 from models.fast_scnn_512x640 import FastSCNN512x640
+from models.efficientvit import get_efficientvit_b1_cls_weights
+from moco.dataset import ThermalSSLDataset
+import numpy as np
 
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
@@ -271,12 +274,15 @@ def main_worker(gpu, ngpus_per_node, args):
         encoder_q = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
         encoder_k = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
     elif args.arch == "efficient-vit":
-        pass
+        encoder_q = get_efficientvit_b1_cls_weights(
+            in_channels=args.in_channels, n_classes=args.moco_dim, weight_path="pretrained_weights/b1-r224.pt", load_weight=True)
+        encoder_k = get_efficientvit_b1_cls_weights(
+            in_channels=args.in_channels, n_classes=args.moco_dim, weight_path="pretrained_weights/b1-r224.pt", load_weight=True)
+        args.mlp = False
     else:
         encoder_q = timm.create_model(args.arch, pretrained=True, num_classes=args.moco_dim, in_chans=args.in_channels)
         encoder_k = timm.create_model(args.arch, pretrained=True, num_classes=args.moco_dim, in_chans=args.in_channels)
-        pass
-    print(encoder_q)
+
     model = moco.builder.MoCo(
         encoder_q,
         encoder_k,
@@ -358,37 +364,35 @@ def main_worker(gpu, ngpus_per_node, args):
     #     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     # )
 
-    normalize = transforms.Normalize(
-        mean=[0.5], std=[0.25]
-    )
+    # normalize = transforms.Normalize(
+    #     mean=[0.5], std=[0.25]
+    # )
 
-    if args.aug_plus:
-        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            transforms.RandomApply(
-                [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
-            ),
-            transforms.Grayscale(num_output_channels=args.in_channels),
-            transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]
-    else:
-        # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-            transforms.Grayscale(num_output_channels=args.in_channels),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]
+    # if args.aug_plus:
+    #     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+    #     augmentation = [
+    #         transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+    #         transforms.RandomApply(
+    #             [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
+    #         ),
+    #         transforms.Grayscale(num_output_channels=args.in_channels),
+    #         transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]
+    # else:
+    #     # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
+    #     augmentation = [
+    #         transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+    #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+    #         transforms.Grayscale(num_output_channels=args.in_channels),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ]
 
-    train_dataset = datasets.ImageFolder(
-        traindir, moco.loader.TwoCropsTransform(transforms.Compose(augmentation))
-    )
+    train_dataset = ThermalSSLDataset(traindir)
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -474,13 +478,17 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         end = time.time()
 
         if args.rank == 0:
-            args.run.log({
-                "acc@1": acc1[0].item(), 
-                'acc@5' : acc5[0].item(),
-                "loss": loss.item(),
-            })
-        if i % args.print_freq == 0:
-            progress.display(i)
+            if i % args.print_freq == 0:
+                progress.display(i)
+                img1 = images[0][0].cpu().numpy().squeeze()
+                img2 = images[1][0].cpu().numpy().squeeze()
+                vis = np.uint8(255 * (0.25 * np.hstack([img1, img2]) + 0.5))
+                args.run.log({
+                    "train/acc@1": acc1[0].item(),
+                    'train/acc@5': acc5[0].item(),
+                    "train/loss": loss.item(),
+                    "train/vis": wandb.Image(vis, caption='Input images'),
+                })
 
 
 def save_checkpoint(state, is_best, filename="checkpoint.pth.tar", experiment_name='00'):
@@ -560,6 +568,7 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].flatten().float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
 
 if __name__ == "__main__":
     main()
