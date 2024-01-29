@@ -7,9 +7,9 @@ dataroot=$3
 # arch=mobilenetv3_small_075
 # arch=resnet18
 python main_moco.py ${dataroot} \
-    --workers 12 \
-    --epochs 300 \
-    --batch-size 256 \
+    --workers 26 \
+    --epochs 200 \
+    --batch-size 512 \
     --multiprocessing-distributed \
     --rank 0 \
     --world-size 1 \
@@ -19,4 +19,4 @@ python main_moco.py ${dataroot} \
     --aug-plus \
     --cos \
     --arch $arch \
-    --exp-name ${arch}-test
+    --exp-name ${arch}-test-more-aug

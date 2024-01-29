@@ -73,15 +73,15 @@ class ThermalSSLDataset(datasets.ImageFolder):
         super(ThermalSSLDataset, self).__init__(root, loader=loader)
 
         self.initial_crop = A.Compose([
-            A.RandomCrop(256, 256),
+            A.RandomCrop(360, 360),
         ])
 
         self.transform = A.Compose([
             A.Rotate(10, p=0.5),
-            A.RandomResizedCrop(224, 224, scale=(0.75, 1.0)),
+            A.RandomResizedCrop(224, 224, scale=(0.25, 1.0)),
             A.HorizontalFlip(),
             A.OneOf([
-                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+                A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
                 SkimageCLAHE(random_clip=True),
             ], p=0.8),
             A.GaussianBlur(sigma_limit=[0.1, 2.0], p=0.5),
@@ -93,14 +93,16 @@ class ThermalSSLDataset(datasets.ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
         sample = self.loader(path)
-        
+        sample = np.float32(sample) / 255.0
+
         h, w, c = sample.shape
         min_dim = min(h, w)
-        if min_dim > 256:
-            sample = A.SmallestMaxSize(random.randint(256, min_dim), p=0.5)(image=sample)['image']
+        if min_dim > 360:
+            sample = A.SmallestMaxSize(random.randint(360, min_dim), p=1)(image=sample)['image']
+            crop = self.initial_crop(image=sample)['image']
+        else:
+            crop = sample
 
-        sample = np.float32(sample) / 255.0
-        crop = self.initial_crop(image=sample)['image']
         sample1 = self.transform(image=crop)['image']
         sample2 = self.transform(image=crop)['image']
         
