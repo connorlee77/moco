@@ -1,0 +1,8 @@
+wandb/
+**/*.ckpt
+**/*.pt
+**/*.pth
+**/*.tar
+**/__pycache__/
+__pycache__/*
+**/*.pyc

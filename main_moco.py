@@ -30,12 +30,10 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
 
+import timm
+import wandb
+from models.fast_scnn_512x640 import FastSCNN512x640
 
-model_names = sorted(
-    name
-    for name in models.__dict__
-    if name.islower() and not name.startswith("__") and callable(models.__dict__[name])
-)
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
 parser.add_argument("data", metavar="DIR", help="path to dataset")
@@ -43,17 +41,17 @@ parser.add_argument(
     "-a",
     "--arch",
     metavar="ARCH",
-    default="resnet50",
-    choices=model_names,
-    help="model architecture: " + " | ".join(model_names) + " (default: resnet50)",
+    default="fast-scnn",
+    choices=['fast-scnn', 'efficient-vit', 'mobilenetv3_small_075', 'resnet18', 'resnet50'],
+    help="model architecture: fast-scnn, efficient-vit, or timm models",
 )
 parser.add_argument(
     "-j",
     "--workers",
-    default=32,
+    default=16,
     type=int,
     metavar="N",
-    help="number of data loading workers (default: 32)",
+    help="number of data loading workers (default: 16)",
 )
 parser.add_argument(
     "--epochs", default=200, type=int, metavar="N", help="number of total epochs to run"
@@ -129,7 +127,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--dist-url",
-    default="tcp://224.66.41.62:23456",
+    default="env://",
     type=str,
     help="url used to set up distributed training",
 )
@@ -149,7 +147,13 @@ parser.add_argument(
     "multi node data parallel training",
 )
 
+parser.add_argument('--exp-name', type=str, required=True, help='name of experiment')
+
 # moco specific configs:
+parser.add_argument(
+    "--in-channels", default=1, type=int, choices=[1, 3], help="input image channels (default: 1)"
+)
+
 parser.add_argument(
     "--moco-dim", default=128, type=int, help="feature dimension (default: 128)"
 )
@@ -179,6 +183,19 @@ parser.add_argument("--cos", action="store_true", help="use cosine lr schedule")
 
 def main():
     args = parser.parse_args()
+
+    if args.rank == 0:
+        print(args)
+        wandb.login()
+        run = wandb.init(
+            # Set the project where this run will be logged
+            project='thermal_ssl_moco',
+            notes=args.exp_name,
+            tags=[args.arch],
+            # Track hyperparameters and run metadata
+            config=vars(args)
+        )
+        args.run = run
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -215,6 +232,9 @@ def main():
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
 
+    if args.rank == 0:
+        args.run.finish()
+
 
 def main_worker(gpu, ngpus_per_node, args):
     args.gpu = gpu
@@ -237,6 +257,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
             args.rank = args.rank * ngpus_per_node + gpu
+        print(args.world_size, args.rank)
         dist.init_process_group(
             backend=args.dist_backend,
             init_method=args.dist_url,
@@ -245,8 +266,20 @@ def main_worker(gpu, ngpus_per_node, args):
         )
     # create model
     print("=> creating model '{}'".format(args.arch))
+    encoder_q, encoder_k = None, None
+    if args.arch == "fast-scnn":
+        encoder_q = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
+        encoder_k = FastSCNN512x640(num_classes=args.moco_dim, in_channels=args.in_channels)
+    elif args.arch == "efficient-vit":
+        pass
+    else:
+        encoder_q = timm.create_model(args.arch, pretrained=True, num_classes=args.moco_dim, in_chans=args.in_channels)
+        encoder_k = timm.create_model(args.arch, pretrained=True, num_classes=args.moco_dim, in_chans=args.in_channels)
+        pass
+    print(encoder_q)
     model = moco.builder.MoCo(
-        models.__dict__[args.arch],
+        encoder_q,
+        encoder_k,
         args.moco_dim,
         args.moco_k,
         args.moco_m,
@@ -319,10 +352,16 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, "train")
+    # traindir = os.path.join(args.data, "train")
+    traindir = args.data
+    # normalize = transforms.Normalize(
+    #     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    # )
+
     normalize = transforms.Normalize(
-        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        mean=[0.5], std=[0.25]
     )
+
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
         augmentation = [
@@ -330,7 +369,7 @@ def main_worker(gpu, ngpus_per_node, args):
             transforms.RandomApply(
                 [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
             ),
-            transforms.RandomGrayscale(p=0.2),
+            transforms.Grayscale(num_output_channels=args.in_channels),
             transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
@@ -340,8 +379,8 @@ def main_worker(gpu, ngpus_per_node, args):
         # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
         augmentation = [
             transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            transforms.RandomGrayscale(p=0.2),
             transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+            transforms.Grayscale(num_output_channels=args.in_channels),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
@@ -386,6 +425,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 },
                 is_best=False,
                 filename="checkpoint_{:04d}.pth.tar".format(epoch),
+                experiment_name=args.exp_name,
             )
 
 
@@ -433,14 +473,22 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
         batch_time.update(time.time() - end)
         end = time.time()
 
+        if args.rank == 0:
+            args.run.log({
+                "acc@1": acc1[0].item(), 
+                'acc@5' : acc5[0].item(),
+                "loss": loss.item(),
+            })
         if i % args.print_freq == 0:
             progress.display(i)
 
 
-def save_checkpoint(state, is_best, filename="checkpoint.pth.tar"):
-    torch.save(state, filename)
+def save_checkpoint(state, is_best, filename="checkpoint.pth.tar", experiment_name='00'):
+    os.makedirs(os.path.join('experiments', experiment_name), exist_ok=True)
+    save_name = os.path.join('experiments', experiment_name, filename)
+    torch.save(state, save_name)
     if is_best:
-        shutil.copyfile(filename, "model_best.pth.tar")
+        shutil.copyfile(save_name, os.path.join('experiments', experiment_name, "model_best.pth.tar"))
 
 
 class AverageMeter:
@@ -509,10 +557,9 @@ def accuracy(output, target, topk=(1,)):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].flatten().float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
-
 
 if __name__ == "__main__":
     main()

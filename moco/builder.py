@@ -13,8 +13,10 @@ class MoCo(nn.Module):
     https://arxiv.org/abs/1911.05722
     """
 
-    def __init__(self, base_encoder, dim=128, K=65536, m=0.999, T=0.07, mlp=False):
+    def __init__(self, encoder_q, encoder_k, dim=128, K=65536, m=0.999, T=0.07, mlp=False):
         """
+        encoder_q: an encoder
+        encoder_k: another encoder (a copy of encoder q)
         dim: feature dimension (default: 128)
         K: queue size; number of negative keys (default: 65536)
         m: moco momentum of updating key encoder (default: 0.999)
@@ -28,18 +30,28 @@ class MoCo(nn.Module):
 
         # create the encoders
         # num_classes is the output fc dimension
-        self.encoder_q = base_encoder(num_classes=dim)
-        self.encoder_k = base_encoder(num_classes=dim)
+        self.encoder_q = encoder_q
+        self.encoder_k = encoder_k
 
         if mlp:  # hack: brute-force replacement
-            dim_mlp = self.encoder_q.fc.weight.shape[1]
-            self.encoder_q.fc = nn.Sequential(
-                nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc
-            )
-            self.encoder_k.fc = nn.Sequential(
-                nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc
-            )
-
+            module_names = dict(self.encoder_q.named_modules())
+            if 'fc' in module_names:
+                dim_mlp = self.encoder_q.fc.weight.shape[1]
+                self.encoder_q.fc = nn.Sequential(
+                    nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.fc
+                )
+                self.encoder_k.fc = nn.Sequential(
+                    nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.fc
+                )
+            elif 'classifier' in module_names:
+                dim_mlp = self.encoder_q.classifier.weight.shape[1]
+                self.encoder_q.classifier = nn.Sequential(
+                    nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_q.classifier
+                )
+                self.encoder_k.classifier = nn.Sequential(
+                    nn.Linear(dim_mlp, dim_mlp), nn.ReLU(), self.encoder_k.classifier
+                )
+                
         for param_q, param_k in zip(
             self.encoder_q.parameters(), self.encoder_k.parameters()
         ):
